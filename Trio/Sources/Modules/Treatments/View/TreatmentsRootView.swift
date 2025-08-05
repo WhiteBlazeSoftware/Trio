@@ -43,6 +43,8 @@ extension Treatments {
         @State private var isAnalyzingFood = false
         @State private var foodAnalysisAlert = false
         @State private var foodAnalysisMessage = ""
+        @State private var showAPIKeyField = false
+        @State private var tempAPIKey = ""
         @StateObject private var foodAnalyzer = FoodAnalyzer()
 
         private var formatter: NumberFormatter {
@@ -366,7 +368,11 @@ extension Treatments {
                         Section {
                             HStack(spacing: 15) {
                                 Button(action: {
-                                    showingFoodCamera = true
+                                    if foodAnalyzer.hasValidAPIKey {
+                                        showingFoodCamera = true
+                                    } else {
+                                        showAPIKeyField = true
+                                    }
                                 }) {
                                     HStack {
                                         Image(systemName: "camera.fill")
@@ -376,13 +382,17 @@ extension Treatments {
                                     .foregroundColor(.white)
                                     .frame(maxWidth: .infinity)
                                     .frame(height: 44)
-                                    .background(Color.green)
+                                    .background(foodAnalyzer.hasValidAPIKey ? Color.green : Color.gray)
                                     .cornerRadius(10)
                                 }
                                 .disabled(isAnalyzingFood)
                                 
                                 Button(action: {
-                                    showingFoodImagePicker = true
+                                    if foodAnalyzer.hasValidAPIKey {
+                                        showingFoodImagePicker = true
+                                    } else {
+                                        showAPIKeyField = true
+                                    }
                                 }) {
                                     HStack {
                                         Image(systemName: "photo.fill")
@@ -392,7 +402,7 @@ extension Treatments {
                                     .foregroundColor(.white)
                                     .frame(maxWidth: .infinity)
                                     .frame(height: 44)
-                                    .background(Color.blue)
+                                    .background(foodAnalyzer.hasValidAPIKey ? Color.blue : Color.gray)
                                     .cornerRadius(10)
                                 }
                                 .disabled(isAnalyzingFood)
@@ -407,6 +417,77 @@ extension Treatments {
                                 }
                                 .frame(maxWidth: .infinity, alignment: .center)
                                 .padding(.vertical, 8)
+                            }
+                            
+                            // API Key Configuration Section
+                            VStack(spacing: 8) {
+                                Button(action: {
+                                    withAnimation(.easeInOut(duration: 0.3)) {
+                                        showAPIKeyField.toggle()
+                                    }
+                                    if showAPIKeyField {
+                                        tempAPIKey = foodAnalyzer.getAPIKey() ?? ""
+                                    }
+                                }) {
+                                    HStack {
+                                        Image(systemName: "key.fill")
+                                        Text(foodAnalyzer.hasValidAPIKey ? "Update API Key" : "Set OpenAI API Key")
+                                        Spacer()
+                                        Image(systemName: showAPIKeyField ? "chevron.up" : "chevron.down")
+                                    }
+                                    .foregroundColor(foodAnalyzer.hasValidAPIKey ? .green : .orange)
+                                    .padding(.vertical, 4)
+                                }
+                                .buttonStyle(.plain)
+                                
+                                if showAPIKeyField {
+                                    VStack(spacing: 12) {
+                                        SecureField("Enter OpenAI API Key", text: $tempAPIKey)
+                                            .textFieldStyle(.roundedBorder)
+                                            .autocapitalization(.none)
+                                            .autocorrectionDisabled()
+                                        
+                                        HStack {
+                                            Button("Cancel") {
+                                                withAnimation(.easeInOut(duration: 0.3)) {
+                                                    showAPIKeyField = false
+                                                }
+                                                tempAPIKey = ""
+                                            }
+                                            .foregroundColor(.secondary)
+                                            
+                                            Spacer()
+                                            
+                                            Button("Save") {
+                                                foodAnalyzer.saveAPIKey(tempAPIKey)
+                                                withAnimation(.easeInOut(duration: 0.3)) {
+                                                    showAPIKeyField = false
+                                                }
+                                                tempAPIKey = ""
+                                            }
+                                            .disabled(tempAPIKey.isEmpty)
+                                            .foregroundColor(.blue)
+                                        }
+                                        
+                                        if foodAnalyzer.hasValidAPIKey {
+                                            Button("Remove API Key") {
+                                                foodAnalyzer.removeAPIKey()
+                                                withAnimation(.easeInOut(duration: 0.3)) {
+                                                    showAPIKeyField = false
+                                                }
+                                                tempAPIKey = ""
+                                            }
+                                            .foregroundColor(.red)
+                                        }
+                                        
+                                        Text("Your API key is stored securely in the device keychain and never shared.")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                            .multilineTextAlignment(.center)
+                                    }
+                                    .padding(.vertical, 8)
+                                    .transition(.opacity.combined(with: .scale))
+                                }
                             }
                         }
                         .listRowBackground(Color.chart)
