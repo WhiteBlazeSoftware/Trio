@@ -744,8 +744,7 @@ class FoodAnalyzer: ObservableObject {
         let base64Image = imageData.base64EncodedString()
         
         // OpenAI API configuration
-        //let apiKey = "YOUR_OPENAI_API_KEY" // Replace with your actual API key
-        let apiKey = "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"
+        let apiKey = "YOUR_OPENAI_API_KEY" // Replace with your actual API key
         let url = URL(string: "https://api.openai.com/v1/chat/completions")!
         
         var request = URLRequest(url: url)
