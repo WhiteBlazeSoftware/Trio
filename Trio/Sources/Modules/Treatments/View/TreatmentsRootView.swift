@@ -3,6 +3,9 @@ import CoreData
 import LoopKitUI
 import SwiftUI
 import Swinject
+import UIKit
+import Vision
+import CoreML
 
 extension Treatments {
     struct RootView: BaseView {
@@ -32,6 +35,15 @@ extension Treatments {
 
         @Environment(\.colorScheme) var colorScheme
         @Environment(AppState.self) var appState
+
+        // Food Analysis States
+        @State private var showConfirmDialogForBolusing = false
+        @State private var showingFoodCamera = false
+        @State private var showingFoodImagePicker = false
+        @State private var isAnalyzingFood = false
+        @State private var foodAnalysisAlert = false
+        @State private var foodAnalysisMessage = ""
+        @StateObject private var foodAnalyzer = FoodAnalyzer()
 
         private var formatter: NumberFormatter {
             let formatter = NumberFormatter()
@@ -349,6 +361,55 @@ extension Treatments {
                         }.listRowBackground(Color.chart)
 
                         treatmentButton
+                        
+                        // Food Analysis Camera Section
+                        Section {
+                            HStack(spacing: 15) {
+                                Button(action: {
+                                    showingFoodCamera = true
+                                }) {
+                                    HStack {
+                                        Image(systemName: "camera.fill")
+                                        Text("Analyze Food")
+                                    }
+                                    .font(.headline)
+                                    .foregroundColor(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 44)
+                                    .background(Color.green)
+                                    .cornerRadius(10)
+                                }
+                                .disabled(isAnalyzingFood)
+                                
+                                Button(action: {
+                                    showingFoodImagePicker = true
+                                }) {
+                                    HStack {
+                                        Image(systemName: "photo.fill")
+                                        Text("From Gallery")
+                                    }
+                                    .font(.headline)
+                                    .foregroundColor(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 44)
+                                    .background(Color.blue)
+                                    .cornerRadius(10)
+                                }
+                                .disabled(isAnalyzingFood)
+                            }
+                            
+                            if isAnalyzingFood {
+                                HStack {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                    Text("Analyzing food...")
+                                        .foregroundColor(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.vertical, 8)
+                            }
+                        }
+                        .listRowBackground(Color.chart)
                     }
                     .listSectionSpacing(sectionSpacing)
                 }
@@ -408,12 +469,65 @@ extension Treatments {
             }) {
                 MealPresetView(state: state)
             }
+            .sheet(isPresented: $showingFoodCamera) {
+                FoodImagePicker(selectedImage: .constant(nil), sourceType: .camera) { image in
+                    if let image = image {
+                        analyzeFoodImage(image)
+                    }
+                }
+            }
+            .sheet(isPresented: $showingFoodImagePicker) {
+                FoodImagePicker(selectedImage: .constant(nil), sourceType: .photoLibrary) { image in
+                    if let image = image {
+                        analyzeFoodImage(image)
+                    }
+                }
+            }
+            .alert("Food Analysis", isPresented: $foodAnalysisAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(foodAnalysisMessage)
+            }
             .alert("Error while processing Treatment", isPresented: $state.showDeterminationFailureAlert) {
                 Button("OK", role: .cancel) {
                     state.hideModal()
                 }
             } message: {
                 Text("\(state.determinationFailureMessage)")
+            }
+        }
+        
+        // MARK: - Food Analysis Methods
+        private func analyzeFoodImage(_ image: UIImage) {
+            isAnalyzingFood = true
+            
+            foodAnalyzer.analyzeFood(image: image) { result in
+                DispatchQueue.main.async {
+                    isAnalyzingFood = false
+                    
+                    switch result {
+                    case .success(let analysisResult):
+                        // Update the treatment fields with analyzed values
+                        state.carbs = analysisResult.carbohydrates.description
+                        state.fat = analysisResult.fat.description
+                        state.protein = analysisResult.protein.description
+                        
+                        // Add food description to notes if available
+                        if !analysisResult.foodDescription.isEmpty {
+                            state.note = analysisResult.foodDescription
+                        }
+                        
+                        // Trigger calculation updates
+                        handleDebouncedInput()
+                        
+                        foodAnalysisMessage = "Successfully analyzed: \(analysisResult.foodDescription)\nCarbs: \(analysisResult.carbohydrates)g, Fat: \(analysisResult.fat)g, Protein: \(analysisResult.protein)g"
+                        foodAnalysisAlert = true
+                        
+                    case .failure(let error):
+                        foodAnalysisMessage = "Failed to analyze food: \(error.localizedDescription)"
+                        foodAnalysisAlert = true
+                    }
+                }
             }
         }
 
@@ -429,8 +543,6 @@ extension Treatments {
                 return .updatingTreatments
             }
         }
-
-        @State private var showConfirmDialogForBolusing = false
 
         private var bolusWarning: (shouldConfirm: Bool, warningMessage: String, color: Color) {
             let isGlucoseVeryLow = state.currentBG < 54
@@ -606,6 +718,168 @@ extension Treatments {
                 .frame(height: 1)
                 .foregroundColor(.gray.opacity(0.65))
                 .padding(.vertical)
+        }
+    }
+}
+
+// MARK: - Food Analysis Result
+struct FoodAnalysisResult {
+    let foodDescription: String
+    let fat: Double
+    let carbohydrates: Double
+    let protein: Double
+}
+
+// MARK: - Food Analyzer Class
+class FoodAnalyzer: ObservableObject {
+    
+    // Analyze food image using OpenAI Vision API
+    func analyzeFood(image: UIImage, completion: @escaping (Result<FoodAnalysisResult, Error>) -> Void) {
+        // Convert image to base64
+        guard let imageData = image.jpegData(compressionQuality: 0.8) else {
+            completion(.failure(NSError(domain: "ImageError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not convert image to data"])))
+            return
+        }
+        
+        let base64Image = imageData.base64EncodedString()
+        
+        // OpenAI API configuration
+        //let apiKey = "YOUR_OPENAI_API_KEY" // Replace with your actual API key
+        let apiKey = "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"
+        let url = URL(string: "https://api.openai.com/v1/chat/completions")!
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        // Create the request payload
+        let payload: [String: Any] = [
+            "model": "gpt-4o-mini",
+            "messages": [
+                [
+                    "role": "user",
+                    "content": [
+                        [
+                            "type": "text",
+                            "text": """
+                            Please analyze this food image and provide nutritional information. 
+                            Respond ONLY in this exact JSON format with no additional text:
+                            {
+                                "foodDescription": "brief description of the food",
+                                "fat": 0.0,
+                                "carbohydrates": 0.0,
+                                "protein": 0.0
+                            }
+                            
+                            Provide values in grams for a typical serving size shown in the image. 
+                            If multiple food items are visible, provide totals for the entire meal.
+                            """
+                        ],
+                        [
+                            "type": "image_url",
+                            "image_url": [
+                                "url": "data:image/jpeg;base64,\(base64Image)"
+                            ]
+                        ]
+                    ]
+                ]
+            ],
+            "max_tokens": 300
+        ]
+        
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        } catch {
+            completion(.failure(error))
+            return
+        }
+        
+        // Make the API request
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                completion(.failure(error))
+                return
+            }
+            
+            guard let data = data else {
+                completion(.failure(NSError(domain: "APIError", code: 2, userInfo: [NSLocalizedDescriptionKey: "No data received"])))
+                return
+            }
+            
+            // Parse the response
+            do {
+                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let choices = json["choices"] as? [[String: Any]],
+                   let firstChoice = choices.first,
+                   let message = firstChoice["message"] as? [String: Any],
+                   let content = message["content"] as? String {
+                    
+                    // Parse the JSON content from OpenAI response
+                    if let contentData = content.data(using: .utf8),
+                       let nutritionJson = try JSONSerialization.jsonObject(with: contentData) as? [String: Any],
+                       let foodDescription = nutritionJson["foodDescription"] as? String,
+                       let fat = nutritionJson["fat"] as? Double,
+                       let carbohydrates = nutritionJson["carbohydrates"] as? Double,
+                       let protein = nutritionJson["protein"] as? Double {
+                        
+                        let result = FoodAnalysisResult(
+                            foodDescription: foodDescription,
+                            fat: fat,
+                            carbohydrates: carbohydrates,
+                            protein: protein
+                        )
+                        completion(.success(result))
+                    } else {
+                        completion(.failure(NSError(domain: "ParseError", code: 3, userInfo: [NSLocalizedDescriptionKey: "Could not parse nutrition data from response"])))
+                    }
+                } else {
+                    completion(.failure(NSError(domain: "APIError", code: 4, userInfo: [NSLocalizedDescriptionKey: "Invalid API response format"])))
+                }
+            } catch {
+                completion(.failure(error))
+            }
+        }.resume()
+    }
+}
+
+// MARK: - Food Image Picker for Treatments
+struct FoodImagePicker: UIViewControllerRepresentable {
+    @Binding var selectedImage: UIImage?
+    @Environment(\.presentationMode) var presentationMode
+    var sourceType: UIImagePickerController.SourceType
+    var onImageSelected: (UIImage?) -> Void
+    
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = sourceType
+        picker.delegate = context.coordinator
+        return picker
+    }
+    
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+    
+    func makeCoordinator() -> FoodImageCoordinator {
+        FoodImageCoordinator(self)
+    }
+    
+    class FoodImageCoordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: FoodImagePicker
+        
+        init(_ parent: FoodImagePicker) {
+            self.parent = parent
+        }
+        
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
+            if let image = info[.originalImage] as? UIImage {
+                parent.onImageSelected(image)
+            }
+            parent.presentationMode.wrappedValue.dismiss()
+        }
+        
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.onImageSelected(nil)
+            parent.presentationMode.wrappedValue.dismiss()
         }
     }
 }
