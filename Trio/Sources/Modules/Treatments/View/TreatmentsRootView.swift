@@ -1078,11 +1078,17 @@ class FoodAnalyzer: ObservableObject {
         }
 
         // Make the API request
-        URLSession.shared.dataTask(with: request) { data, _, error in
+        URLSession.shared.dataTask(with: request) { data, response, error in
             if let error = error {
                 print("❌ Network error: \(error.localizedDescription)")
                 completion(.failure(error))
                 return
+            }
+
+            // Check HTTP response
+            if let httpResponse = response as? HTTPURLResponse {
+                print("🌐 HTTP Status Code: \(httpResponse.statusCode)")
+                print("🌐 HTTP Headers: \(httpResponse.allHeaderFields)")
             }
 
             guard let data = data else {
@@ -1095,114 +1101,190 @@ class FoodAnalyzer: ObservableObject {
                 return
             }
 
-            print("✅ Received data from OpenAI")
+            print("✅ Received \(data.count) bytes from OpenAI")
+
+            // Show raw response as string first
+            let rawResponse = String(data: data, encoding: .utf8) ?? "Unable to decode as UTF-8"
+            print("🔍 Raw response (first 500 chars): \(String(rawResponse.prefix(500)))")
+
+            // Check if response starts with expected JSON
+            if !rawResponse.hasPrefix("{"), !rawResponse.hasPrefix("[") {
+                print("❌ Response doesn't start with JSON. Starts with: '\(String(rawResponse.prefix(20)))'")
+                completion(.failure(NSError(
+                    domain: "APIError",
+                    code: 11,
+                    userInfo: [NSLocalizedDescriptionKey: "Response is not JSON format. Response: \(rawResponse)"]
+                )))
+                return
+            }
 
             // Parse the response
             do {
-                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    print("🔍 Full API response: \(json)")
+                let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                print("✅ Successfully parsed top-level JSON")
 
-                    if let choices = json["choices"] as? [[String: Any]],
-                       let firstChoice = choices.first,
-                       let message = firstChoice["message"] as? [String: Any],
-                       let content = message["content"] as? String
-                    {
-                        print("🔍 Raw content from OpenAI: '\(content)'")
-
-                        // Clean the content - remove markdown code blocks if present
-                        let cleanedContent = content
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
-                            .replacingOccurrences(of: "```json", with: "")
-                            .replacingOccurrences(of: "```", with: "")
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-                        print("🔍 Cleaned content: '\(cleanedContent)'")
-
-                        // Parse the JSON content from OpenAI response
-                        if let contentData = cleanedContent.data(using: .utf8) {
-                            do {
-                                if let nutritionJson = try JSONSerialization.jsonObject(with: contentData) as? [String: Any] {
-                                    print("🔍 Parsed nutrition JSON: \(nutritionJson)")
-
-                                    guard let foodDescription = nutritionJson["foodDescription"] as? String,
-                                          let fat = nutritionJson["fat"] as? Double,
-                                          let carbohydrates = nutritionJson["carbohydrates"] as? Double,
-                                          let protein = nutritionJson["protein"] as? Double
-                                    else {
-                                        print("❌ Missing required fields in nutrition JSON")
-                                        completion(.failure(NSError(
-                                            domain: "ParseError",
-                                            code: 5,
-                                            userInfo: [NSLocalizedDescriptionKey: "Missing required nutrition fields"]
-                                        )))
-                                        return
-                                    }
-
-                                    let result = FoodAnalysisResult(
-                                        foodDescription: foodDescription,
-                                        fat: fat,
-                                        carbohydrates: carbohydrates,
-                                        protein: protein
-                                    )
-                                    print("✅ Successfully parsed food analysis: \(foodDescription)")
-                                    completion(.success(result))
-                                } else {
-                                    print("❌ Content is not valid JSON object")
-                                    completion(.failure(NSError(
-                                        domain: "ParseError",
-                                        code: 6,
-                                        userInfo: [NSLocalizedDescriptionKey: "Content is not valid JSON: \(cleanedContent)"]
-                                    )))
-                                }
-                            } catch {
-                                print("❌ JSON parsing error: \(error)")
-                                completion(.failure(NSError(
-                                    domain: "ParseError",
-                                    code: 7,
-                                    userInfo: [
-                                        NSLocalizedDescriptionKey: "JSON parsing failed: \(error.localizedDescription). Content: \(cleanedContent)"
-                                    ]
-                                )))
-                            }
-                        } else {
-                            print("❌ Failed to convert cleaned content to data")
-                            completion(.failure(NSError(
-                                domain: "ParseError",
-                                code: 8,
-                                userInfo: [NSLocalizedDescriptionKey: "Failed to convert content to data"]
-                            )))
-                        }
-                    } else {
-                        print("❌ Invalid API response structure")
-                        if let error = json["error"] as? [String: Any] {
-                            print("🔍 API Error: \(error)")
-                            let message = error["message"] as? String ?? "Unknown API error"
-                            completion(.failure(NSError(
-                                domain: "APIError",
-                                code: 9,
-                                userInfo: [NSLocalizedDescriptionKey: "OpenAI API Error: \(message)"]
-                            )))
-                        } else {
-                            completion(.failure(NSError(
-                                domain: "APIError",
-                                code: 4,
-                                userInfo: [NSLocalizedDescriptionKey: "Invalid API response format"]
-                            )))
-                        }
-                    }
-                } else {
-                    print("❌ Response is not valid JSON")
-                    let responseString = String(data: data, encoding: .utf8) ?? "Unable to decode response"
-                    print("🔍 Raw response: \(responseString)")
+                guard let json = json else {
+                    print("❌ JSON is not a dictionary")
                     completion(.failure(NSError(
                         domain: "APIError",
-                        code: 10,
-                        userInfo: [NSLocalizedDescriptionKey: "Invalid JSON response: \(responseString)"]
+                        code: 12,
+                        userInfo: [NSLocalizedDescriptionKey: "JSON is not a dictionary"]
+                    )))
+                    return
+                }
+
+                print("🔍 JSON keys: \(Array(json.keys))")
+
+                // Check for API errors first
+                if let error = json["error"] as? [String: Any] {
+                    print("❌ OpenAI API Error: \(error)")
+                    let message = error["message"] as? String ?? "Unknown API error"
+                    let type = error["type"] as? String ?? "unknown"
+                    completion(.failure(NSError(
+                        domain: "OpenAIError",
+                        code: 13,
+                        userInfo: [NSLocalizedDescriptionKey: "OpenAI Error (\(type)): \(message)"]
+                    )))
+                    return
+                }
+
+                guard let choices = json["choices"] as? [[String: Any]] else {
+                    print("❌ No 'choices' array in response")
+                    completion(.failure(NSError(
+                        domain: "APIError",
+                        code: 14,
+                        userInfo: [NSLocalizedDescriptionKey: "No choices in API response"]
+                    )))
+                    return
+                }
+
+                guard let firstChoice = choices.first else {
+                    print("❌ Choices array is empty")
+                    completion(.failure(NSError(
+                        domain: "APIError",
+                        code: 15,
+                        userInfo: [NSLocalizedDescriptionKey: "Empty choices array"]
+                    )))
+                    return
+                }
+
+                print("🔍 First choice keys: \(Array(firstChoice.keys))")
+
+                guard let message = firstChoice["message"] as? [String: Any] else {
+                    print("❌ No 'message' in first choice")
+                    completion(.failure(NSError(
+                        domain: "APIError",
+                        code: 16,
+                        userInfo: [NSLocalizedDescriptionKey: "No message in choice"]
+                    )))
+                    return
+                }
+
+                print("🔍 Message keys: \(Array(message.keys))")
+
+                guard let content = message["content"] as? String else {
+                    print("❌ No 'content' in message")
+                    completion(.failure(NSError(
+                        domain: "APIError",
+                        code: 17,
+                        userInfo: [NSLocalizedDescriptionKey: "No content in message"]
+                    )))
+                    return
+                }
+
+                print("🔍 Raw content from OpenAI: '\(content)'")
+
+                // Clean the content - remove markdown code blocks if present
+                let cleanedContent = content
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .replacingOccurrences(of: "```json", with: "")
+                    .replacingOccurrences(of: "```", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                print("🔍 Cleaned content: '\(cleanedContent)'")
+
+                // Validate that cleaned content looks like JSON
+                if !cleanedContent.hasPrefix("{") {
+                    print("❌ Cleaned content doesn't start with '{'. Starts with: '\(String(cleanedContent.prefix(20)))'")
+                    completion(.failure(NSError(
+                        domain: "ParseError",
+                        code: 18,
+                        userInfo: [NSLocalizedDescriptionKey: "Content is not JSON format: \(cleanedContent)"]
+                    )))
+                    return
+                }
+
+                // Parse the JSON content from OpenAI response
+                guard let contentData = cleanedContent.data(using: .utf8) else {
+                    print("❌ Failed to convert cleaned content to data")
+                    completion(.failure(NSError(
+                        domain: "ParseError",
+                        code: 19,
+                        userInfo: [NSLocalizedDescriptionKey: "Failed to convert content to data"]
+                    )))
+                    return
+                }
+
+                do {
+                    guard let nutritionJson = try JSONSerialization.jsonObject(with: contentData) as? [String: Any] else {
+                        print("❌ Content JSON is not a dictionary")
+                        completion(.failure(NSError(
+                            domain: "ParseError",
+                            code: 20,
+                            userInfo: [NSLocalizedDescriptionKey: "Content JSON is not a dictionary"]
+                        )))
+                        return
+                    }
+
+                    print("🔍 Parsed nutrition JSON keys: \(Array(nutritionJson.keys))")
+                    print("🔍 Full nutrition JSON: \(nutritionJson)")
+
+                    guard let foodDescription = nutritionJson["foodDescription"] as? String,
+                          let fat = nutritionJson["fat"] as? Double,
+                          let carbohydrates = nutritionJson["carbohydrates"] as? Double,
+                          let protein = nutritionJson["protein"] as? Double
+                    else {
+                        print("❌ Missing required fields in nutrition JSON")
+                        print("🔍 foodDescription: \(nutritionJson["foodDescription"] ?? "missing")")
+                        print("🔍 fat: \(nutritionJson["fat"] ?? "missing")")
+                        print("🔍 carbohydrates: \(nutritionJson["carbohydrates"] ?? "missing")")
+                        print("🔍 protein: \(nutritionJson["protein"] ?? "missing")")
+                        completion(.failure(NSError(
+                            domain: "ParseError",
+                            code: 21,
+                            userInfo: [NSLocalizedDescriptionKey: "Missing required nutrition fields"]
+                        )))
+                        return
+                    }
+
+                    let result = FoodAnalysisResult(
+                        foodDescription: foodDescription,
+                        fat: fat,
+                        carbohydrates: carbohydrates,
+                        protein: protein
+                    )
+                    print("✅ Successfully parsed food analysis: \(foodDescription)")
+                    completion(.success(result))
+
+                } catch {
+                    print("❌ JSON parsing error for content: \(error)")
+                    completion(.failure(NSError(
+                        domain: "ParseError",
+                        code: 22,
+                        userInfo: [
+                            NSLocalizedDescriptionKey: "JSON parsing failed: \(error.localizedDescription). Content: \(cleanedContent)"
+                        ]
                     )))
                 }
+
             } catch {
-                print("❌ JSON serialization error: \(error)")
-                completion(.failure(error))
+                print("❌ Top-level JSON serialization error: \(error)")
+                print("🔍 Raw data (hex): \(data.map { String(format: "%02x", $0) }.joined())")
+                completion(.failure(NSError(
+                    domain: "APIError",
+                    code: 23,
+                    userInfo: [NSLocalizedDescriptionKey: "Failed to parse API response as JSON: \(error.localizedDescription)"]
+                )))
             }
         }.resume()
     }
