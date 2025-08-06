@@ -1,11 +1,12 @@
 import Charts
 import CoreData
+import CoreML
 import LoopKitUI
+import PhotosUI
 import SwiftUI
 import Swinject
 import UIKit
 import Vision
-import CoreML
 
 extension Treatments {
     struct RootView: BaseView {
@@ -38,8 +39,8 @@ extension Treatments {
 
         // Food Analysis States
         @State private var showConfirmDialogForBolusing = false
-        @State private var showingFoodCamera = false
-        @State private var showingFoodImagePicker = false
+        @State private var showingCamera = false
+        @State private var showingPhotoPicker = false
         @State private var isAnalyzingFood = false
         @State private var foodAnalysisAlert = false
         @State private var foodAnalysisMessage = ""
@@ -363,20 +364,26 @@ extension Treatments {
                         }.listRowBackground(Color.chart)
 
                         treatmentButton
-                        
+
                         // Food Analysis Camera Section
                         Section {
-                            HStack(spacing: 15) {
+                            VStack(spacing: 12) {
                                 Button(action: {
+                                    print("🔴 Take Photo button pressed")
+                                    guard !isAnalyzingFood else { return }
                                     if foodAnalyzer.hasValidAPIKey {
-                                        showingFoodCamera = true
+                                        // Ensure photo picker is closed first
+                                        showingPhotoPicker = false
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                            self.showingCamera = true
+                                        }
                                     } else {
                                         showAPIKeyField = true
                                     }
                                 }) {
                                     HStack {
                                         Image(systemName: "camera.fill")
-                                        Text("Analyze Food")
+                                        Text("Take Photo")
                                     }
                                     .font(.headline)
                                     .foregroundColor(.white)
@@ -386,10 +393,17 @@ extension Treatments {
                                     .cornerRadius(10)
                                 }
                                 .disabled(isAnalyzingFood)
-                                
+                                .buttonStyle(.plain)
+
                                 Button(action: {
+                                    print("🔵 From Gallery button pressed")
+                                    guard !isAnalyzingFood else { return }
                                     if foodAnalyzer.hasValidAPIKey {
-                                        showingFoodImagePicker = true
+                                        // Ensure camera is closed first
+                                        showingCamera = false
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                            self.showingPhotoPicker = true
+                                        }
                                     } else {
                                         showAPIKeyField = true
                                     }
@@ -406,8 +420,9 @@ extension Treatments {
                                     .cornerRadius(10)
                                 }
                                 .disabled(isAnalyzingFood)
+                                .buttonStyle(.plain)
                             }
-                            
+
                             if isAnalyzingFood {
                                 HStack {
                                     ProgressView()
@@ -418,7 +433,7 @@ extension Treatments {
                                 .frame(maxWidth: .infinity, alignment: .center)
                                 .padding(.vertical, 8)
                             }
-                            
+
                             // API Key Configuration Section
                             VStack(spacing: 8) {
                                 Button(action: {
@@ -439,36 +454,68 @@ extension Treatments {
                                     .padding(.vertical, 4)
                                 }
                                 .buttonStyle(.plain)
-                                
+
                                 if showAPIKeyField {
                                     VStack(spacing: 12) {
-                                        SecureField("Enter OpenAI API Key", text: $tempAPIKey)
-                                            .textFieldStyle(.roundedBorder)
-                                            .autocapitalization(.none)
-                                            .autocorrectionDisabled()
-                                        
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text("OpenAI API Key")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+
+                                            SecureField("sk-...", text: $tempAPIKey)
+                                                .textFieldStyle(.roundedBorder)
+                                                .autocapitalization(.none)
+                                                .autocorrectionDisabled()
+                                                .textContentType(.password)
+                                                .submitLabel(.done)
+                                                .onSubmit {
+                                                    if !tempAPIKey.isEmpty {
+                                                        foodAnalyzer.saveAPIKey(tempAPIKey)
+                                                        withAnimation(.easeInOut(duration: 0.3)) {
+                                                            showAPIKeyField = false
+                                                        }
+                                                        tempAPIKey = ""
+                                                    }
+                                                }
+                                        }
+
                                         HStack {
                                             Button("Cancel") {
                                                 withAnimation(.easeInOut(duration: 0.3)) {
                                                     showAPIKeyField = false
                                                 }
                                                 tempAPIKey = ""
+                                                // Dismiss keyboard
+                                                UIApplication.shared.sendAction(
+                                                    #selector(UIResponder.resignFirstResponder),
+                                                    to: nil,
+                                                    from: nil,
+                                                    for: nil
+                                                )
                                             }
                                             .foregroundColor(.secondary)
-                                            
+
                                             Spacer()
-                                            
+
                                             Button("Save") {
                                                 foodAnalyzer.saveAPIKey(tempAPIKey)
                                                 withAnimation(.easeInOut(duration: 0.3)) {
                                                     showAPIKeyField = false
                                                 }
                                                 tempAPIKey = ""
+                                                // Dismiss keyboard
+                                                UIApplication.shared.sendAction(
+                                                    #selector(UIResponder.resignFirstResponder),
+                                                    to: nil,
+                                                    from: nil,
+                                                    for: nil
+                                                )
                                             }
                                             .disabled(tempAPIKey.isEmpty)
                                             .foregroundColor(.blue)
+                                            .fontWeight(.semibold)
                                         }
-                                        
+
                                         if foodAnalyzer.hasValidAPIKey {
                                             Button("Remove API Key") {
                                                 foodAnalyzer.removeAPIKey()
@@ -476,14 +523,22 @@ extension Treatments {
                                                     showAPIKeyField = false
                                                 }
                                                 tempAPIKey = ""
+                                                // Dismiss keyboard
+                                                UIApplication.shared.sendAction(
+                                                    #selector(UIResponder.resignFirstResponder),
+                                                    to: nil,
+                                                    from: nil,
+                                                    for: nil
+                                                )
                                             }
                                             .foregroundColor(.red)
                                         }
-                                        
+
                                         Text("Your API key is stored securely in the device keychain and never shared.")
                                             .font(.caption)
                                             .foregroundColor(.secondary)
                                             .multilineTextAlignment(.center)
+                                            .fixedSize(horizontal: false, vertical: true)
                                     }
                                     .padding(.vertical, 8)
                                     .transition(.opacity.combined(with: .scale))
@@ -550,22 +605,37 @@ extension Treatments {
             }) {
                 MealPresetView(state: state)
             }
-            .sheet(isPresented: $showingFoodCamera) {
-                FoodImagePicker(selectedImage: .constant(nil), sourceType: .camera) { image in
+            .sheet(isPresented: $showingCamera) {
+                CameraImagePicker { image in
+                    showingCamera = false // Explicitly close camera
                     if let image = image {
                         analyzeFoodImage(image)
                     }
                 }
             }
-            .sheet(isPresented: $showingFoodImagePicker) {
-                FoodImagePicker(selectedImage: .constant(nil), sourceType: .photoLibrary) { image in
-                    if let image = image {
-                        analyzeFoodImage(image)
+            .photosPicker(
+                isPresented: $showingPhotoPicker,
+                selection: Binding<PhotosPickerItem?>(
+                    get: { nil },
+                    set: { newItem in
+                        showingPhotoPicker = false // Explicitly close picker
+                        if let newItem = newItem {
+                            Task {
+                                if let data = try? await newItem.loadTransferable(type: Data.self),
+                                   let image = UIImage(data: data)
+                                {
+                                    DispatchQueue.main.async {
+                                        self.analyzeFoodImage(image)
+                                    }
+                                }
+                            }
+                        }
                     }
-                }
-            }
+                ),
+                matching: .images
+            )
             .alert("Food Analysis", isPresented: $foodAnalysisAlert) {
-                Button("OK", role: .cancel) { }
+                Button("OK", role: .cancel) {}
             } message: {
                 Text(foodAnalysisMessage)
             }
@@ -577,34 +647,36 @@ extension Treatments {
                 Text("\(state.determinationFailureMessage)")
             }
         }
-        
+
         // MARK: - Food Analysis Methods
+
         private func analyzeFoodImage(_ image: UIImage) {
             isAnalyzingFood = true
-            
+
             foodAnalyzer.analyzeFood(image: image) { result in
                 DispatchQueue.main.async {
                     isAnalyzingFood = false
-                    
+
                     switch result {
-                    case .success(let analysisResult):
-                        // Update the treatment fields with analyzed values
-                        state.carbs = analysisResult.carbohydrates.description
-                        state.fat = analysisResult.fat.description
-                        state.protein = analysisResult.protein.description
-                        
+                    case let .success(analysisResult):
+                        // Update the treatment fields with analyzed values - convert Double to Decimal
+                        state.carbs = Decimal(analysisResult.carbohydrates)
+                        state.fat = Decimal(analysisResult.fat)
+                        state.protein = Decimal(analysisResult.protein)
+
                         // Add food description to notes if available
                         if !analysisResult.foodDescription.isEmpty {
                             state.note = analysisResult.foodDescription
                         }
-                        
+
                         // Trigger calculation updates
                         handleDebouncedInput()
-                        
-                        foodAnalysisMessage = "Successfully analyzed: \(analysisResult.foodDescription)\nCarbs: \(analysisResult.carbohydrates)g, Fat: \(analysisResult.fat)g, Protein: \(analysisResult.protein)g"
-                        foodAnalysisAlert = true
-                        
-                    case .failure(let error):
+
+                        foodAnalysisMessage =
+                            "Successfully analyzed: \(analysisResult.foodDescription)\nCarbs: \(analysisResult.carbohydrates)g, Fat: \(analysisResult.fat)g, Protein: \(analysisResult.protein)g"
+                        foodAnalysisAlert = false
+
+                    case let .failure(error):
                         foodAnalysisMessage = "Failed to analyze food: \(error.localizedDescription)"
                         foodAnalysisAlert = true
                     }
@@ -804,6 +876,7 @@ extension Treatments {
 }
 
 // MARK: - Food Analysis Result
+
 struct FoodAnalysisResult {
     let foodDescription: String
     let fat: Double
@@ -812,27 +885,156 @@ struct FoodAnalysisResult {
 }
 
 // MARK: - Food Analyzer Class
+
 class FoodAnalyzer: ObservableObject {
-    
-    // Analyze food image using OpenAI Vision API
-    func analyzeFood(image: UIImage, completion: @escaping (Result<FoodAnalysisResult, Error>) -> Void) {
-        // Convert image to base64
-        guard let imageData = image.jpegData(compressionQuality: 0.8) else {
-            completion(.failure(NSError(domain: "ImageError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not convert image to data"])))
+    @Published var hasValidAPIKey: Bool = false
+
+    private let keychainKey = "OpenAI_API_Key"
+
+    init() {
+        checkAPIKeyStatus()
+    }
+
+    // Check if API key exists and update status
+    private func checkAPIKeyStatus() {
+        hasValidAPIKey = getAPIKey() != nil
+    }
+
+    // Save API key to keychain
+    func saveAPIKey(_ apiKey: String) {
+        print("🔑 Attempting to save API key...")
+        guard !apiKey.isEmpty else {
+            print("❌ API key is empty")
             return
         }
-        
+
+        print("🔑 API key length: \(apiKey.count)")
+
+        guard let data = apiKey.data(using: .utf8) else {
+            print("❌ Failed to convert API key to data")
+            return
+        }
+
+        print("🔑 API key converted to data successfully")
+
+        // First, delete any existing item
+        let deleteQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "FoodAnalyzer",
+            kSecAttrAccount as String: keychainKey
+        ]
+
+        let deleteStatus = SecItemDelete(deleteQuery as CFDictionary)
+        print("🔑 Delete existing item status: \(deleteStatus) (this is OK if item doesn't exist)")
+
+        // Add new item
+        let addQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "FoodAnalyzer",
+            kSecAttrAccount as String: keychainKey,
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        ]
+
+        print("🔑 Attempting to add item to keychain...")
+        let status = SecItemAdd(addQuery as CFDictionary, nil)
+        print("🔑 Keychain add status: \(status)")
+
+        let success = (status == errSecSuccess)
+        print("🔑 Save successful: \(success)")
+
+        DispatchQueue.main.async {
+            self.hasValidAPIKey = success
+            print("🔑 Updated hasValidAPIKey to: \(success)")
+        }
+    }
+
+    // Get API key from keychain
+    func getAPIKey() -> String? {
+        print("🔍 Attempting to retrieve API key...")
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "FoodAnalyzer",
+            kSecAttrAccount as String: keychainKey,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+
+        print("🔍 Keychain read status: \(status)")
+
+        guard status == errSecSuccess else {
+            print("❌ Failed to retrieve API key, status: \(status)")
+            return nil
+        }
+
+        guard let data = item as? Data else {
+            print("❌ Retrieved item is not Data")
+            return nil
+        }
+
+        guard let apiKey = String(data: data, encoding: .utf8) else {
+            print("❌ Failed to convert data to string")
+            return nil
+        }
+
+        print("✅ API key retrieved successfully, length: \(apiKey.count)")
+        return apiKey
+    }
+
+    // Remove API key from keychain
+    func removeAPIKey() {
+        print("🗑️ Attempting to remove API key...")
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "FoodAnalyzer",
+            kSecAttrAccount as String: keychainKey
+        ]
+
+        let status = SecItemDelete(query as CFDictionary)
+        print("🗑️ Keychain delete status: \(status)")
+
+        DispatchQueue.main.async {
+            self.hasValidAPIKey = false
+            print("🗑️ Updated hasValidAPIKey to: false")
+        }
+    }
+
+    // Analyze food image using OpenAI Vision API
+    func analyzeFood(image: UIImage, completion: @escaping (Result<FoodAnalysisResult, Error>) -> Void) {
+        guard let apiKey = getAPIKey() else {
+            completion(.failure(NSError(
+                domain: "APIKeyError",
+                code: 0,
+                userInfo: [NSLocalizedDescriptionKey: "No API key found. Please set your OpenAI API key."]
+            )))
+            return
+        }
+
+        // Convert image to base64
+        guard let imageData = image.jpegData(compressionQuality: 0.8) else {
+            completion(.failure(NSError(
+                domain: "ImageError",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Could not convert image to data"]
+            )))
+            return
+        }
+
         let base64Image = imageData.base64EncodedString()
-        
+
         // OpenAI API configuration
-        let apiKey = "YOUR_OPENAI_API_KEY" // Replace with your actual API key
         let url = URL(string: "https://api.openai.com/v1/chat/completions")!
-        
+
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
+
         // Create the request payload
         let payload: [String: Any] = [
             "model": "gpt-4o-mini",
@@ -851,7 +1053,7 @@ class FoodAnalyzer: ObservableObject {
                                 "carbohydrates": 0.0,
                                 "protein": 0.0
                             }
-                            
+
                             Provide values in grams for a typical serving size shown in the image. 
                             If multiple food items are visible, provide totals for the entire meal.
                             """
@@ -867,99 +1069,196 @@ class FoodAnalyzer: ObservableObject {
             ],
             "max_tokens": 300
         ]
-        
+
         do {
             request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         } catch {
             completion(.failure(error))
             return
         }
-        
+
         // Make the API request
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        URLSession.shared.dataTask(with: request) { data, _, error in
             if let error = error {
+                print("❌ Network error: \(error.localizedDescription)")
                 completion(.failure(error))
                 return
             }
-            
+
             guard let data = data else {
-                completion(.failure(NSError(domain: "APIError", code: 2, userInfo: [NSLocalizedDescriptionKey: "No data received"])))
+                print("❌ No data received")
+                completion(.failure(NSError(
+                    domain: "APIError",
+                    code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: "No data received"]
+                )))
                 return
             }
-            
+
+            print("✅ Received data from OpenAI")
+
             // Parse the response
             do {
-                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let choices = json["choices"] as? [[String: Any]],
-                   let firstChoice = choices.first,
-                   let message = firstChoice["message"] as? [String: Any],
-                   let content = message["content"] as? String {
-                    
-                    // Parse the JSON content from OpenAI response
-                    if let contentData = content.data(using: .utf8),
-                       let nutritionJson = try JSONSerialization.jsonObject(with: contentData) as? [String: Any],
-                       let foodDescription = nutritionJson["foodDescription"] as? String,
-                       let fat = nutritionJson["fat"] as? Double,
-                       let carbohydrates = nutritionJson["carbohydrates"] as? Double,
-                       let protein = nutritionJson["protein"] as? Double {
-                        
-                        let result = FoodAnalysisResult(
-                            foodDescription: foodDescription,
-                            fat: fat,
-                            carbohydrates: carbohydrates,
-                            protein: protein
-                        )
-                        completion(.success(result))
+                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    print("🔍 Full API response: \(json)")
+
+                    if let choices = json["choices"] as? [[String: Any]],
+                       let firstChoice = choices.first,
+                       let message = firstChoice["message"] as? [String: Any],
+                       let content = message["content"] as? String
+                    {
+                        print("🔍 Raw content from OpenAI: '\(content)'")
+
+                        // Clean the content - remove markdown code blocks if present
+                        let cleanedContent = content
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                            .replacingOccurrences(of: "```json", with: "")
+                            .replacingOccurrences(of: "```", with: "")
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                        print("🔍 Cleaned content: '\(cleanedContent)'")
+
+                        // Parse the JSON content from OpenAI response
+                        if let contentData = cleanedContent.data(using: .utf8) {
+                            do {
+                                if let nutritionJson = try JSONSerialization.jsonObject(with: contentData) as? [String: Any] {
+                                    print("🔍 Parsed nutrition JSON: \(nutritionJson)")
+
+                                    guard let foodDescription = nutritionJson["foodDescription"] as? String,
+                                          let fat = nutritionJson["fat"] as? Double,
+                                          let carbohydrates = nutritionJson["carbohydrates"] as? Double,
+                                          let protein = nutritionJson["protein"] as? Double
+                                    else {
+                                        print("❌ Missing required fields in nutrition JSON")
+                                        completion(.failure(NSError(
+                                            domain: "ParseError",
+                                            code: 5,
+                                            userInfo: [NSLocalizedDescriptionKey: "Missing required nutrition fields"]
+                                        )))
+                                        return
+                                    }
+
+                                    let result = FoodAnalysisResult(
+                                        foodDescription: foodDescription,
+                                        fat: fat,
+                                        carbohydrates: carbohydrates,
+                                        protein: protein
+                                    )
+                                    print("✅ Successfully parsed food analysis: \(foodDescription)")
+                                    completion(.success(result))
+                                } else {
+                                    print("❌ Content is not valid JSON object")
+                                    completion(.failure(NSError(
+                                        domain: "ParseError",
+                                        code: 6,
+                                        userInfo: [NSLocalizedDescriptionKey: "Content is not valid JSON: \(cleanedContent)"]
+                                    )))
+                                }
+                            } catch {
+                                print("❌ JSON parsing error: \(error)")
+                                completion(.failure(NSError(
+                                    domain: "ParseError",
+                                    code: 7,
+                                    userInfo: [
+                                        NSLocalizedDescriptionKey: "JSON parsing failed: \(error.localizedDescription). Content: \(cleanedContent)"
+                                    ]
+                                )))
+                            }
+                        } else {
+                            print("❌ Failed to convert cleaned content to data")
+                            completion(.failure(NSError(
+                                domain: "ParseError",
+                                code: 8,
+                                userInfo: [NSLocalizedDescriptionKey: "Failed to convert content to data"]
+                            )))
+                        }
                     } else {
-                        completion(.failure(NSError(domain: "ParseError", code: 3, userInfo: [NSLocalizedDescriptionKey: "Could not parse nutrition data from response"])))
+                        print("❌ Invalid API response structure")
+                        if let error = json["error"] as? [String: Any] {
+                            print("🔍 API Error: \(error)")
+                            let message = error["message"] as? String ?? "Unknown API error"
+                            completion(.failure(NSError(
+                                domain: "APIError",
+                                code: 9,
+                                userInfo: [NSLocalizedDescriptionKey: "OpenAI API Error: \(message)"]
+                            )))
+                        } else {
+                            completion(.failure(NSError(
+                                domain: "APIError",
+                                code: 4,
+                                userInfo: [NSLocalizedDescriptionKey: "Invalid API response format"]
+                            )))
+                        }
                     }
                 } else {
-                    completion(.failure(NSError(domain: "APIError", code: 4, userInfo: [NSLocalizedDescriptionKey: "Invalid API response format"])))
+                    print("❌ Response is not valid JSON")
+                    let responseString = String(data: data, encoding: .utf8) ?? "Unable to decode response"
+                    print("🔍 Raw response: \(responseString)")
+                    completion(.failure(NSError(
+                        domain: "APIError",
+                        code: 10,
+                        userInfo: [NSLocalizedDescriptionKey: "Invalid JSON response: \(responseString)"]
+                    )))
                 }
             } catch {
+                print("❌ JSON serialization error: \(error)")
                 completion(.failure(error))
             }
         }.resume()
     }
 }
 
-// MARK: - Food Image Picker for Treatments
-struct FoodImagePicker: UIViewControllerRepresentable {
-    @Binding var selectedImage: UIImage?
+// MARK: - Camera Image Picker (Camera Only)
+
+struct CameraImagePicker: UIViewControllerRepresentable {
     @Environment(\.presentationMode) var presentationMode
-    var sourceType: UIImagePickerController.SourceType
     var onImageSelected: (UIImage?) -> Void
-    
+
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
-        picker.sourceType = sourceType
+        picker.sourceType = .camera
+        picker.allowsEditing = false
         picker.delegate = context.coordinator
         return picker
     }
-    
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
-    
-    func makeCoordinator() -> FoodImageCoordinator {
-        FoodImageCoordinator(self)
+
+    func updateUIViewController(_: UIImagePickerController, context _: Context) {}
+
+    func makeCoordinator() -> CameraCoordinator {
+        CameraCoordinator(self)
     }
-    
-    class FoodImageCoordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let parent: FoodImagePicker
-        
-        init(_ parent: FoodImagePicker) {
+
+    class CameraCoordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: CameraImagePicker
+
+        init(_ parent: CameraImagePicker) {
             self.parent = parent
         }
-        
-        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
-            if let image = info[.originalImage] as? UIImage {
-                parent.onImageSelected(image)
+
+        func imagePickerController(
+            _: UIImagePickerController,
+            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+        ) {
+            print("📸 Camera: Image selected")
+            let image = info[.originalImage] as? UIImage
+
+            // Dismiss first, then callback
+            parent.presentationMode.wrappedValue.dismiss()
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self.parent.onImageSelected(image)
             }
-            parent.presentationMode.wrappedValue.dismiss()
         }
-        
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            parent.onImageSelected(nil)
+
+        func imagePickerControllerDidCancel(_: UIImagePickerController) {
+            print("📸 Camera: Cancelled")
+
+            // Dismiss first, then callback with nil
             parent.presentationMode.wrappedValue.dismiss()
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self.parent.onImageSelected(nil)
+            }
         }
     }
 }
