@@ -7,4 +7,16 @@ storage_mode("git")
 
 type("appstore")
 
+app_identifier([
+  "org.nightscout.trio",
+  "org.nightscout.trio.watchkitapp",
+  "org.nightscout.trio.watchkitapp.watchkitextension"
+])
+
+# Enable Time Sensitive Notifications capability
+enable_services(
+  push_notification: :on,
+  time_sensitive_notifications: :on
+)
+
 # The docs are available on https://docs.fastlane.tools/actions/match
